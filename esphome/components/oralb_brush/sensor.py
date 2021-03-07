@@ -20,7 +20,7 @@ OralbBrush = oralb_brush_ns.class_(
 CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(OralbBrush),
     cv.Required(CONF_MAC_ADDRESS): cv.mac_address,
-    cv.Optional(CONF_STATE): sensor.sensor_schema(UNIT_EMPTY, ICON_EMPTY, 0),
+    #cv.Optional(CONF_STATE): sensor.sensor_schema(UNIT_EMPTY, ICON_EMPTY, 0),
 }).extend(esp32_ble_tracker.ESP_BLE_DEVICE_SCHEMA).extend(cv.COMPONENT_SCHEMA)
 
 

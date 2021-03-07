@@ -11,9 +11,8 @@ from contextlib import contextmanager
 import voluptuous as vol
 
 from esphome import core, core_config, yaml_util
-from esphome.components import substitutions
-from esphome.components.substitutions import CONF_SUBSTITUTIONS
-from esphome.const import CONF_ESPHOME, CONF_PLATFORM, ESP_PLATFORMS
+from esphome.const import CONF_ESPHOME, CONF_PLATFORM, ESP_PLATFORMS, CONF_PACKAGES, \
+    CONF_SUBSTITUTIONS
 from esphome.core import CORE, EsphomeError  # noqa
 from esphome.helpers import color, indent
 from esphome.util import safe_print, OrderedDict
@@ -66,6 +65,10 @@ class ComponentManifest:
     @property
     def auto_load(self):
         return getattr(self.module, 'AUTO_LOAD', [])
+
+    @property
+    def codeowners(self) -> List[str]:
+        return getattr(self.module, 'CODEOWNERS', [])
 
     def _get_flags_set(self, name, config):
         if not hasattr(self.module, name):
@@ -262,9 +265,13 @@ class Config(OrderedDict):
         doc_range = None
         for item_index in path:
             try:
+                if item_index in data:
+                    doc_range = [x for x in data.keys() if x == item_index][0].esp_range
                 data = data[item_index]
             except (KeyError, IndexError, TypeError):
                 return doc_range
+            if isinstance(data, core.ID):
+                data = data.id
             if isinstance(data, ESPHomeDataBase) and data.esp_range is not None:
                 doc_range = data.esp_range
 
@@ -387,15 +394,27 @@ def recursive_check_replaceme(value):
     return value
 
 
-def validate_config(config):
+def validate_config(config, command_line_substitutions):
     result = Config()
+
+    # 0. Load packages
+    if CONF_PACKAGES in config:
+        from esphome.components.packages import do_packages_pass
+        result.add_output_path([CONF_PACKAGES], CONF_PACKAGES)
+        try:
+            config = do_packages_pass(config)
+        except vol.Invalid as err:
+            result.update(config)
+            result.add_error(err)
+            return result
 
     # 1. Load substitutions
     if CONF_SUBSTITUTIONS in config:
-        result[CONF_SUBSTITUTIONS] = config[CONF_SUBSTITUTIONS]
+        from esphome.components import substitutions
+        result[CONF_SUBSTITUTIONS] = {**config[CONF_SUBSTITUTIONS], **command_line_substitutions}
         result.add_output_path([CONF_SUBSTITUTIONS], CONF_SUBSTITUTIONS)
         try:
-            substitutions.do_substitution_pass(config)
+            substitutions.do_substitution_pass(config, command_line_substitutions)
         except vol.Invalid as err:
             result.add_error(err)
             return result
@@ -444,7 +463,6 @@ def validate_config(config):
 
     while load_queue:
         domain, conf = load_queue.popleft()
-        domain = str(domain)
         if domain.startswith('.'):
             # Ignore top-level keys starting with a dot
             continue
@@ -656,15 +674,15 @@ class InvalidYAMLError(EsphomeError):
         self.base_exc = base_exc
 
 
-def _load_config():
+def _load_config(command_line_substitutions):
     try:
         config = yaml_util.load_yaml(CORE.config_path)
     except EsphomeError as e:
-        raise InvalidYAMLError(e)
+        raise InvalidYAMLError(e) from e
     CORE.raw_config = config
 
     try:
-        result = validate_config(config)
+        result = validate_config(config, command_line_substitutions)
     except EsphomeError:
         raise
     except Exception:
@@ -674,22 +692,23 @@ def _load_config():
     return result
 
 
-def load_config():
+def load_config(command_line_substitutions):
     try:
-        return _load_config()
+        return _load_config(command_line_substitutions)
     except vol.Invalid as err:
-        raise EsphomeError(f"Error while parsing config: {err}")
+        raise EsphomeError(f"Error while parsing config: {err}") from err
 
 
-def line_info(obj, highlight=True):
+def line_info(config, path, highlight=True):
     """Display line config source."""
     if not highlight:
         return None
-    if isinstance(obj, ESPHomeDataBase) and obj.esp_range is not None:
-        mark = obj.esp_range.start_mark
+    obj = config.get_deepest_document_range_for_path(path)
+    if obj:
+        mark = obj.start_mark
         source = "[source {}:{}]".format(mark.document, mark.line + 1)
         return color('cyan', source)
-    return None
+    return 'None'
 
 
 def _print_on_next_line(obj):
@@ -730,7 +749,7 @@ def dump_dict(config, path, at_root=True):
                 sep = color('red', sep)
             msg, _ = dump_dict(config, path_, at_root=False)
             msg = indent(msg)
-            inf = line_info(config.get_nested_item(path_), highlight=config.is_in_error_path(path_))
+            inf = line_info(config, path_, highlight=config.is_in_error_path(path_))
             if inf is not None:
                 msg = inf + '\n' + msg
             elif msg:
@@ -753,7 +772,7 @@ def dump_dict(config, path, at_root=True):
                 st = color('red', st)
             msg, m = dump_dict(config, path_, at_root=False)
 
-            inf = line_info(config.get_nested_item(path_), highlight=config.is_in_error_path(path_))
+            inf = line_info(config, path_, highlight=config.is_in_error_path(path_))
             if m:
                 msg = '\n' + indent(msg)
 
@@ -813,10 +832,10 @@ def strip_default_ids(config):
     return config
 
 
-def read_config():
+def read_config(command_line_substitutions):
     _LOGGER.info("Reading configuration %s...", CORE.config_path)
     try:
-        res = load_config()
+        res = load_config(command_line_substitutions)
     except EsphomeError as err:
         _LOGGER.error("Error while reading config: %s", err)
         return None
@@ -830,8 +849,11 @@ def read_config():
             if not res.is_in_error_path(path):
                 continue
 
-            safe_print(color('bold_red', f'{domain}:') + ' ' +
-                       (line_info(res.get_nested_item(path)) or ''))
+            errstr = color('bold_red', f'{domain}:')
+            errline = line_info(res, path)
+            if errline:
+                errstr += ' ' + errline
+            safe_print(errstr)
             safe_print(indent(dump_dict(res, path)[0]))
         return None
     return OrderedDict(res)

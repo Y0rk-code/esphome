@@ -33,7 +33,8 @@ ESP8266_BOARD_PINS = {
     'espresso_lite_v2': {'LED': 2},
     'gen4iod': {},
     'heltec_wifi_kit_8': 'd1_mini',
-    'huzzah': {'LED': 0},
+    'huzzah': {'LED': 0, 'LED_RED': 0, 'LED_BLUE': 2, 'D4': 4, 'D5': 5, 'D12': 12,
+               'D13': 13, 'D14': 14, 'D15': 15, 'D16': 16},
     'inventone': {},
     'modwifi': {},
     'nodemcu': {'D0': 16, 'D1': 5, 'D2': 4, 'D3': 0, 'D4': 2, 'D5': 14, 'D6': 12, 'D7': 13,
@@ -181,6 +182,7 @@ ESP32_BOARD_PINS = {
     'iotbusio': {},
     'iotbusproteus': {},
     'lolin32': {'LED': 5},
+    'lolin32-lite': {'LED': 22},
     'lolin_d32': {'LED': 5, '_VBAT': 35},
     'lolin_d32_pro': {'LED': 5, '_VBAT': 35},
     'lopy': {'A1': 37, 'A2': 38, 'LED': 0, 'MISO': 37, 'MOSI': 22, 'SCK': 13, 'SCL': 13,
@@ -238,6 +240,8 @@ ESP32_BOARD_PINS = {
     'ttgo-t-beam': {'BUTTON': 39, 'LED': 14, 'MOSI': 27, 'SCK': 5, 'SS': 18},
     'ttgo-t-watch': {'BUTTON': 36, 'MISO': 2, 'MOSI': 15, 'SCK': 14, 'SS': 13},
     'ttgo-t1': {'LED': 22, 'MISO': 2, 'MOSI': 15, 'SCK': 14, 'SCL': 23, 'SS': 13},
+    'ttgo-t7-v13-mini32': {'LED': 22},
+    'ttgo-t7-v14-mini32': {'LED': 19},
     'turta_iot_node': {},
     'vintlabs-devkit-v1': {'LED': 2, 'PWM0': 12, 'PWM1': 13, 'PWM2': 14, 'PWM3': 15, 'PWM4': 16,
                            'PWM5': 17, 'PWM6': 18, 'PWM7': 19},
@@ -255,16 +259,20 @@ ESP32_BOARD_PINS = {
 
 def _lookup_pin(value):
     if CORE.is_esp8266:
-        board_pins = ESP8266_BOARD_PINS.get(CORE.board, {})
+        board_pins_dict = ESP8266_BOARD_PINS
         base_pins = ESP8266_BASE_PINS
     elif CORE.is_esp32:
-        board_pins = ESP32_BOARD_PINS.get(CORE.board, {})
+        board_pins_dict = ESP32_BOARD_PINS
         base_pins = ESP32_BASE_PINS
     else:
         raise NotImplementedError
 
+    board_pins = board_pins_dict.get(CORE.board, {})
+
+    # Resolved aliased board pins (shorthand when two boards have the same pin configuration)
     while isinstance(board_pins, str):
-        board_pins = ESP8266_BOARD_PINS.get(board_pins, {})
+        board_pins = board_pins_dict[board_pins]
+
     if value in board_pins:
         return board_pins[value]
     if value in base_pins:
